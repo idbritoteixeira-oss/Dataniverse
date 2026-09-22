@@ -1,4 +1,4 @@
-modules = []
+modules = ["python-base-3.13"]
 
 [agent]
 expertMode = true

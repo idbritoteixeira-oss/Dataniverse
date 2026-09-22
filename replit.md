@@ -1,22 +1,23 @@
-# Dataniverse
+# Dataniverse Server
 
-Aplicativo Flutter para organizar, explorar e transformar dados em insights
-mais claros.
+Servidor de banco de dados local em Flutter/Dart, com persistência JSON,
+índices por campo e acesso TCP autenticado pela rede Wi-Fi.
 
 ## Comandos
 
 - `flutter pub get` — instala as dependências Dart
 - `flutter run` — executa o aplicativo em um dispositivo ou emulador
-- `flutter run -d chrome` — executa a versão web
 - `flutter analyze` — executa a análise estática
 - `flutter test` — executa os testes de widget
 - `flutter build apk --release` — gera o APK Android de produção
 
 ## Estrutura
 
-- `lib/main.dart` — aplicativo inicial e tema do Dataniverse
+- `lib/main.dart` — interface e controle do ciclo de vida do servidor
+- `lib/config/server_config.dart` — configuração persistida em `config.json`
+- `lib/database/enx_db.dart` — armazenamento JSON e índices `.db`
+- `lib/network/dataniverse_server.dart` — servidor TCP e protocolo JSON
 - `android/` — projeto Android nativo e Gradle Wrapper
-- `web/` — shell da aplicação Flutter Web
 - `test/` — testes automatizados
 - `.github/workflows/android_build.yml` — análise, testes, build e upload do APK
 
@@ -25,14 +26,15 @@ mais claros.
 - O projeto usa exclusivamente Flutter e Dart.
 - O aplicativo vive na raiz do repositório para que o GitHub Actions execute os
   comandos Flutter diretamente.
-- O primeiro build usa apenas o Flutter SDK e `cupertino_icons`, mantendo as
-  dependências pequenas e reprodutíveis.
+- O primeiro build usa Flutter SDK, `crypto`, `path_provider`,
+  `network_info_plus` e `path`.
 - O Android usa Java 17 e o Flutter Gradle Plugin Loader do template stable.
 
 ## Produto
 
-O Dataniverse começa com uma experiência de dashboard para visualizar coleções,
-insights e atividade recente, servindo como base para as próximas telas.
+O Dataniverse Server permite iniciar um banco JSON local, receber comandos
+`AUTH`, `INSERT`, `FIND_BY_ID` e `FIND_BY_INDEX`, e acompanhar os eventos pela
+interface do aplicativo.
 ## User preferences
 
 _Populate as you build — explicit user instructions worth remembering across sessions._

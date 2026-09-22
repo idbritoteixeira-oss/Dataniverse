@@ -1,5 +1,5 @@
-name: dataniverse
-description: Dataniverse — um ponto de partida Flutter para explorar dados com clareza.
+name: dataniverse_server
+description: Dataniverse Server — banco de dados JSON acessível pela rede local.
 publish_to: "none"
 version: 1.0.0+1
 
@@ -10,6 +10,10 @@ dependencies:
   flutter:
     sdk: flutter
   cupertino_icons: ^1.0.8
+  crypto: ^3.0.6
+  network_info_plus: ^6.1.4
+  path: ^1.9.0
+  path_provider: ^2.1.5
 
 dev_dependencies:
   flutter_test:
