@@ -1,0 +1,1 @@
+- [Flutter tooling](flutter-tooling.md) — local environment lacks Flutter, Dart, and Java; use the CI-installed toolchain for native validation.

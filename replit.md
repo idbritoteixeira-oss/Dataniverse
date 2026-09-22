@@ -1,9 +1,15 @@
-# [Project name]
+# Dataniverse
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+Aplicativo Flutter para organizar, explorar e transformar dados em insights mais claros.
 
 ## Run & Operate
 
+- `flutter pub get` — install Dart and Flutter dependencies
+- `flutter run` — run the mobile app on a connected device/emulator
+- `flutter run -d chrome` — run the web target
+- `flutter analyze` — static analysis
+- `flutter test` — widget tests
+- `flutter build apk --release` — production Android APK
 - `pnpm --filter @workspace/api-server run dev` — run the API server (port 5000)
 - `pnpm run typecheck` — full typecheck across all packages
 - `pnpm run build` — typecheck + build all packages
@@ -13,6 +19,7 @@ _Replace the heading above with the project's name, and this line with one sente
 
 ## Stack
 
+- Flutter / Dart, Material 3
 - pnpm workspaces, Node.js 24, TypeScript 5.9
 - API: Express 5
 - DB: PostgreSQL + Drizzle ORM
@@ -22,15 +29,22 @@ _Replace the heading above with the project's name, and this line with one sente
 
 ## Where things live
 
-_Populate as you build — short repo map plus pointers to the source-of-truth file for DB schema, API contracts, theme files, etc._
+- `lib/main.dart` — initial Dataniverse app and theme
+- `android/` — Android Gradle project and native entry point
+- `web/` — Flutter web shell
+- `.github/workflows/android_build.yml` — CI build, analysis, tests, and APK artifact
 
 ## Architecture decisions
 
-_Populate as you build — non-obvious choices a reader couldn't infer from the code (3-5 bullets)._
+- The Flutter application lives at the repository root so GitHub Actions can run the standard Flutter commands without extra working-directory configuration.
+- The initial app uses only Flutter SDK and `cupertino_icons`, keeping the first build dependency-light and reproducible.
+- Android uses Java 17 and the Flutter Gradle plugin loader required by current stable Flutter templates.
 
 ## Product
 
-_Describe the high-level user-facing capabilities of this app once they exist._
+O Dataniverse começa com uma experiência de dashboard para visualizar coleções,
+insights e atividade recente, servindo como base para as próximas telas do
+produto.
 
 ## User preferences
 
