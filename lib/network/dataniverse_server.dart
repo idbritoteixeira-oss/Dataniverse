@@ -23,43 +23,49 @@ class DataniverseServer {
   final ServerLogCallback? onLog;
   final ConnectionCountCallback? onConnectionsChanged;
 
-  ServerSocket? _serverSocket;
-  StreamSubscription<Socket>? _serverSubscription;
-  final Set<Socket> _clients = {};
-  final Map<Socket, bool> _authenticated = {};
+  // ── #1 Alteração: Usamos HttpServer em vez de ServerSocket ──
+  HttpServer? _httpServer;
+  StreamSubscription<HttpRequest>? _serverSubscription;
+  
+  // As listas agora armazenam WebSockets
+  final Set<WebSocket> _clients = {};
+  final Map<WebSocket, bool> _authenticated = {};
 
-  // ── #1 IP público detectado assincronamente ──
   String? publicIp;
 
-  bool get isRunning => _serverSocket != null;
+  bool get isRunning => _httpServer != null;
   int get connectionCount => _clients.length;
 
   Future<void> start() async {
     if (isRunning) return;
 
-    // #4 Garante estrutura de pastas antes de aceitar conexões
+    // Garante estrutura de pastas antes de aceitar conexões
     await database.ensureStructure();
 
-    _serverSocket = await ServerSocket.bind(
+    // ── #2 Inicializa o HttpServer ──
+    _httpServer = await HttpServer.bind(
       InternetAddress.anyIPv4,
       config.port,
     );
-    _serverSubscription = _serverSocket!.listen(_handleClient);
-    _log('Servidor iniciado na porta ${config.port}.');
+    
+    // Escuta as requisições HTTP de entrada
+    _serverSubscription = _httpServer!.listen(_handleHttpRequest);
+    _log('Servidor iniciado na porta ${config.port} (HTTP/WebSocket).');
 
-    // #1 Busca IP público sem bloquear o start
+    // Busca IP público assincronamente
     _detectPublicIp();
   }
 
   Future<void> stop() async {
-    final serverSocket = _serverSocket;
-    _serverSocket = null;
+    final server = _httpServer;
+    _httpServer = null;
     await _serverSubscription?.cancel();
     _serverSubscription = null;
-    await serverSocket?.close();
+    await server?.close();
 
+    // Fecha todos os clientes conectados
     for (final socket in _clients.toList()) {
-      socket.destroy();
+      await socket.close();
     }
     _clients.clear();
     _authenticated.clear();
@@ -67,9 +73,6 @@ class DataniverseServer {
     _log('Servidor parado.');
   }
 
-  // ──────────────────────────────────────────────
-  // #1 Detecção de IP público
-  // ──────────────────────────────────────────────
   Future<void> _detectPublicIp() async {
     try {
       final response = await http
@@ -85,40 +88,38 @@ class DataniverseServer {
   }
 
   // ──────────────────────────────────────────────
-  // Recebe conexão — detecta se é HTTP ou TCP puro
+  // #3 Roteamento: Separa HTTP comum de WebSockets
   // ──────────────────────────────────────────────
-  void _handleClient(Socket socket) {
+  void _handleHttpRequest(HttpRequest request) {
+    if (WebSocketTransformer.isUpgradeRequest(request)) {
+      // É uma tentativa de conexão WebSocket (ws://)
+      WebSocketTransformer.upgrade(request).then((socket) {
+        _handleWebSocketClient(socket, request);
+      }).catchError((error) {
+        _log('Erro ao fazer upgrade para WebSocket: $error');
+      });
+    } else {
+      // É uma requisição HTTP comum (navegador acessando a página)
+      _serveHtmlPage(request);
+    }
+  }
+
+  // ──────────────────────────────────────────────
+  // Gestão de Conexão WebSocket
+  // ──────────────────────────────────────────────
+  void _handleWebSocketClient(WebSocket socket, HttpRequest request) {
     _clients.add(socket);
     _authenticated[socket] = false;
     onConnectionsChanged?.call(connectionCount);
-    _log(
-      'Cliente conectado: ${socket.remoteAddress.address}:${socket.remotePort}.',
-    );
+    
+    final address = request.connectionInfo?.remoteAddress.address ?? 'Desconhecido';
+    _log('Cliente WebSocket conectado: $address.');
 
-    // Lê o primeiro chunk para detectar protocolo
-    bool protocolDecided = false;
-    final buffer = StringBuffer();
-
-    socket.cast<List<int>>().listen(
-      (bytes) {
-        if (!protocolDecided) {
-          final chunk = utf8.decode(bytes, allowMalformed: true);
-          buffer.write(chunk);
-          final raw = buffer.toString();
-
-          // Detecta requisição HTTP pelo verbo na primeira linha
-          if (raw.startsWith('GET ') ||
-              raw.startsWith('POST ') ||
-              raw.startsWith('HEAD ')) {
-            protocolDecided = true;
-            _handleHttpRequest(socket, raw);
-          } else if (raw.contains('\n')) {
-            // Tem uma linha completa → protocolo TCP/JSON
-            protocolDecided = true;
-            _switchToJsonProtocol(socket, raw);
-          }
-          // Se ainda não tem linha completa, continua acumulando
-        }
+    // Escuta as mensagens JSON recebidas
+    socket.listen(
+      (dynamic message) {
+        // Os WebSockets entregam a mensagem completa, sem precisar de buffer!
+        unawaited(_handleLine(socket, message.toString()));
       },
       onError: (Object error) {
         _log('Erro de comunicação com cliente: $error');
@@ -129,22 +130,14 @@ class DataniverseServer {
   }
 
   // ──────────────────────────────────────────────
-  // #6 HTTP: serve página HTML de status
+  // Serve página HTML de status (HTTP GET)
   // ──────────────────────────────────────────────
-  void _handleHttpRequest(Socket socket, String rawRequest) {
-    final body = _buildHtmlIndex();
-    final response = [
-      'HTTP/1.1 200 OK',
-      'Content-Type: text/html; charset=utf-8',
-      'Content-Length: ${utf8.encode(body).length}',
-      'Connection: close',
-      '',
-      body,
-    ].join('\r\n');
-
-    socket.write(response);
-    socket.destroy();
-    _log('Página HTTP servida para ${socket.remoteAddress.address}.');
+  Future<void> _serveHtmlPage(HttpRequest request) async {
+    final response = request.response;
+    response.headers.contentType = ContentType.html;
+    response.write(_buildHtmlIndex());
+    await response.close();
+    _log('Página HTTP servida para ${request.connectionInfo?.remoteAddress.address}.');
   }
 
   String _buildHtmlIndex() {
@@ -182,55 +175,22 @@ class DataniverseServer {
     <h1>Dataniverse Server</h1>
     <div class="badge"><span class="dot"></span> Online</div>
     <table>
-      <tr><td>Porta TCP</td><td>${config.port}</td></tr>
-      <tr><td>Protocolo</td><td>TCP / JSON</td></tr>
+      <tr><td>Porta</td><td>${config.port}</td></tr>
+      <tr><td>Protocolo</td><td>WebSocket / JSON</td></tr>
       <tr><td>IP público</td><td>${publicIp ?? 'detectando...'}</td></tr>
       <tr><td>Conexões ativas</td><td>$connectionCount</td></tr>
       <tr><td>Última verificação</td><td>$now</td></tr>
     </table>
-    <p class="footer">Conecte-se via TCP na porta ${config.port} e envie AUTH primeiro.</p>
+    <p class="footer">Conecte-se via WebSocket (ws://) na porta ${config.port} e envie AUTH primeiro.</p>
   </div>
 </body>
 </html>''';
   }
 
   // ──────────────────────────────────────────────
-  // Protocolo TCP/JSON (comportamento original)
+  // Processamento de Mensagens JSON
   // ──────────────────────────────────────────────
-  void _switchToJsonProtocol(Socket socket, String buffered) {
-    // Processa as linhas já acumuladas no buffer
-    final lines = buffered.split('\n');
-    for (var i = 0; i < lines.length - 1; i++) {
-      final line = lines[i].replaceAll('\r', '');
-      unawaited(_handleLine(socket, line));
-    }
-
-    // A última parte pode estar incompleta; guarda para o próximo chunk
-    final partial = lines.last;
-    final partialBuffer = StringBuffer(partial);
-
-    socket.cast<List<int>>().transform(utf8.decoder).listen(
-      (chunk) {
-        partialBuffer.write(chunk);
-        final all = partialBuffer.toString();
-        final parts = all.split('\n');
-        partialBuffer.clear();
-        partialBuffer.write(parts.last);
-        for (var i = 0; i < parts.length - 1; i++) {
-          final line = parts[i].replaceAll('\r', '');
-          unawaited(_handleLine(socket, line));
-        }
-      },
-      onError: (Object error) {
-        _log('Erro de comunicação com cliente: $error');
-        _removeClient(socket);
-      },
-      onDone: () => _removeClient(socket),
-      cancelOnError: true,
-    );
-  }
-
-  Future<void> _handleLine(Socket socket, String line) async {
+  Future<void> _handleLine(WebSocket socket, String line) async {
     if (line.trim().isEmpty) return;
 
     try {
@@ -311,181 +271,98 @@ class DataniverseServer {
     }
   }
 
-  Future<void> _insert(
-    Socket socket,
-    Map<String, dynamic> request,
-  ) async {
+  // Métodos de Banco de Dados mantidos exatamente iguais, 
+  // recebendo apenas o WebSocket agora.
+
+  Future<void> _insert(WebSocket socket, Map<String, dynamic> request) async {
     final table = _requiredString(request, 'table');
     final rawData = request['data'];
     if (rawData is! Map) {
       throw const FormatException('O campo data precisa ser um objeto.');
     }
-
     final record = await database.insert(
       table,
       Map<String, dynamic>.from(rawData),
       _optionalString(request['seedShard']),
     );
     _log('INSERT em $table: ${record['id']}.');
-    await _respond(
-      socket,
-      status: 'SUCCESS',
-      message: 'Registro inserido.',
-      data: record,
-    );
+    await _respond(socket, status: 'SUCCESS', message: 'Registro inserido.', data: record);
   }
 
-  Future<void> _update(
-    Socket socket,
-    Map<String, dynamic> request,
-  ) async {
+  Future<void> _update(WebSocket socket, Map<String, dynamic> request) async {
     final table = _requiredString(request, 'table');
     final id = _requiredString(request, 'id');
     final rawData = request['data'];
     if (rawData is! Map) {
       throw const FormatException('O campo data precisa ser um objeto.');
     }
-
     final record = await database.update(
-      table,
-      id,
-      Map<String, dynamic>.from(rawData),
-      _optionalString(request['seedShard']),
+      table, id, Map<String, dynamic>.from(rawData), _optionalString(request['seedShard'])
     );
     _log('UPDATE em $table: $id.');
-    await _respond(
-      socket,
-      status: 'SUCCESS',
-      message: 'Registro atualizado.',
-      data: record,
-    );
+    await _respond(socket, status: 'SUCCESS', message: 'Registro atualizado.', data: record);
   }
 
-  Future<void> _delete(
-    Socket socket,
-    Map<String, dynamic> request,
-  ) async {
+  Future<void> _delete(WebSocket socket, Map<String, dynamic> request) async {
     final table = _requiredString(request, 'table');
-
-    // DELETE de tabela inteira se não vier id
-    if (!request.containsKey('id') ||
-        request['id']?.toString().trim().isEmpty == true) {
-      await database.deleteTable(
-        table,
-        _optionalString(request['seedShard']),
-      );
+    if (!request.containsKey('id') || request['id']?.toString().trim().isEmpty == true) {
+      await database.deleteTable(table, _optionalString(request['seedShard']));
       _log('DELETE tabela $table.');
-      await _respond(
-        socket,
-        status: 'SUCCESS',
-        message: 'Tabela eliminada.',
-      );
+      await _respond(socket, status: 'SUCCESS', message: 'Tabela eliminada.');
       return;
     }
-
     final id = _requiredString(request, 'id');
-    final deleted = await database.deleteRecord(
-      table,
-      id,
-      _optionalString(request['seedShard']),
-    );
+    final deleted = await database.deleteRecord(table, id, _optionalString(request['seedShard']));
     _log('DELETE em $table: $id.');
-    await _respond(
-      socket,
-      status: deleted ? 'SUCCESS' : 'ERROR',
-      message: deleted ? 'Registro eliminado.' : 'Registro não encontrado.',
-    );
+    await _respond(socket, status: deleted ? 'SUCCESS' : 'ERROR', 
+                   message: deleted ? 'Registro eliminado.' : 'Registro não encontrado.');
   }
 
-  Future<void> _findById(
-    Socket socket,
-    Map<String, dynamic> request,
-  ) async {
+  Future<void> _findById(WebSocket socket, Map<String, dynamic> request) async {
     final table = _requiredString(request, 'table');
     final id = _requiredString(request, 'id');
-    final record = await database.findById(
-      table,
-      id,
-      _optionalString(request['seedShard']),
-    );
+    final record = await database.findById(table, id, _optionalString(request['seedShard']));
     _log('FIND_BY_ID em $table: $id.');
-    await _respond(
-      socket,
-      status: record == null ? 'ERROR' : 'SUCCESS',
-      message: record == null
-          ? 'Registro não encontrado.'
-          : 'Registro encontrado.',
-      data: record,
-    );
+    await _respond(socket, status: record == null ? 'ERROR' : 'SUCCESS',
+                   message: record == null ? 'Registro não encontrado.' : 'Registro encontrado.', data: record);
   }
 
-  Future<void> _findByIndex(
-    Socket socket,
-    Map<String, dynamic> request,
-  ) async {
+  Future<void> _findByIndex(WebSocket socket, Map<String, dynamic> request) async {
     final table = _requiredString(request, 'table');
     final field = _requiredString(request, 'field');
-    if (!request.containsKey('value')) {
-      throw const FormatException('O campo value é obrigatório.');
-    }
-
-    final records = await database.findByIndex(
-      table,
-      field,
-      request['value'],
-      _optionalString(request['seedShard']),
-    );
+    if (!request.containsKey('value')) throw const FormatException('O campo value é obrigatório.');
+    final records = await database.findByIndex(table, field, request['value'], _optionalString(request['seedShard']));
     _log('FIND_BY_INDEX em $table.$field.');
-    await _respond(
-      socket,
-      status: 'SUCCESS',
-      message: '${records.length} registro(s) encontrado(s).',
-      data: records,
-    );
+    await _respond(socket, status: 'SUCCESS', message: '${records.length} registro(s) encontrado(s).', data: records);
   }
 
-  Future<void> _listTables(Socket socket) async {
+  Future<void> _listTables(WebSocket socket) async {
     final tables = await database.listTables();
-    await _respond(
-      socket,
-      status: 'SUCCESS',
-      message: '${tables.length} tabela(s).',
-      data: tables,
-    );
+    await _respond(socket, status: 'SUCCESS', message: '${tables.length} tabela(s).', data: tables);
   }
 
-  Future<void> _listRecords(
-    Socket socket,
-    Map<String, dynamic> request,
-  ) async {
+  Future<void> _listRecords(WebSocket socket, Map<String, dynamic> request) async {
     final table = _requiredString(request, 'table');
-    final records = await database.listRecords(
-      table,
-      _optionalString(request['seedShard']),
-    );
-    await _respond(
-      socket,
-      status: 'SUCCESS',
-      message: '${records.length} registro(s).',
-      data: records,
-    );
+    final records = await database.listRecords(table, _optionalString(request['seedShard']));
+    await _respond(socket, status: 'SUCCESS', message: '${records.length} registro(s).', data: records);
   }
 
+  // ── #4 Respondendo ao Cliente ──
   Future<void> _respond(
-    Socket socket, {
+    WebSocket socket, {
     required String status,
     required String message,
     dynamic data,
   }) {
-    if (!_clients.contains(socket)) {
-      return Future<void>.value();
-    }
-    socket.write(
-      '${jsonEncode({
-            'status': status,
-            'message': message,
-            'data': data,
-          })}\n',
+    if (!_clients.contains(socket)) return Future<void>.value();
+    
+    // O WebSocket usa 'add' em vez de 'write' para enviar a string pronta
+    socket.add(
+      jsonEncode({
+        'status': status,
+        'message': message,
+        'data': data,
+      })
     );
     return Future<void>.value();
   }
@@ -503,7 +380,7 @@ class DataniverseServer {
     return normalized == null || normalized.isEmpty ? null : normalized;
   }
 
-  void _removeClient(Socket socket) {
+  void _removeClient(WebSocket socket) {
     _clients.remove(socket);
     _authenticated.remove(socket);
     onConnectionsChanged?.call(connectionCount);
