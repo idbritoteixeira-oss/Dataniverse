@@ -189,12 +189,6 @@ class _DataniverseServerPageState extends State<DataniverseServerPage> {
             'Mantém o servidor de banco de dados ativo em segundo plano.',
         channelImportance: NotificationChannelImportance.LOW,
         priority: NotificationPriority.LOW,
-        // Ícone na barra de status (requer drawable ic_dataniverse)
-        iconData: const NotificationIconData(
-          resType: ResourceType.drawable,
-          resPrefix: ResourcePrefix.ic,
-          name: 'dataniverse',
-        ),
       ),
       iosNotificationOptions: const IOSNotificationOptions(
         showNotification: true,
@@ -318,6 +312,12 @@ class _DataniverseServerPageState extends State<DataniverseServerPage> {
         serviceId: 1000,
         notificationTitle: 'Dataniverse · Iniciando',
         notificationText: 'Porta ${_config!.port}',
+        // Ícone na barra de status — drawable ic_dataniverse.xml
+        notificationIcon: const NotificationIconData(
+          resType: ResourceType.drawable,
+          resPrefix: ResourcePrefix.ic,
+          name: 'dataniverse',
+        ),
         callback: startCallback,
       );
 
