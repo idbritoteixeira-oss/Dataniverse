@@ -4,7 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   testWidgets('exibe a tela inicial do Dataniverse Server', (tester) async {
-    final config = ServerConfig(
+    const config = ServerConfig(
       port: 8080,
       password: 'test-password',
       basePath: '/tmp/dataniverse_test_data',
