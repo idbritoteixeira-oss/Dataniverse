@@ -20,10 +20,26 @@ android {
 
     defaultConfig {
         applicationId = "com.dataniverse.app"
-        minSdk = flutter.minSdkVersion
+        
+        // Define o suporte minimo para Android 5.0 (API 21) para garantir instalacao em qualquer aparelho
+        minSdk = 21
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+
+        // Suporte a arquiteturas de processadores moveis
+        ndk {
+            abiFilters "armeabi-v7a", "arm64-v8a", "x86_64"
+        }
+    }
+
+    buildTypes {
+        release {
+            // Assina o APK de release usando a chave de debug para permitir instalacao manual no celular
+            signingConfig signingConfigs.debug
+            minifyEnabled false
+            shrinkResources false
+        }
     }
 }
 

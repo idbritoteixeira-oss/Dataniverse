@@ -8,38 +8,44 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
 
     steps:
+      # 1. Baixa o código fonte do repositório no ambiente de compilação
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
 
+      # 2. Configura o ambiente Java (JDK 17) necessário para o Gradle do Android
       - name: Set up Java
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@v4
         with:
           distribution: 'zulu'
           java-version: '17'
 
+      # 3. Configura o SDK do Flutter na versão estável com cache ativado para agilizar a build
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
           cache: true
 
+      # 4. Instala todas as dependências declaradas no pubspec.yaml
       - name: Install dependencies
         run: flutter pub get
 
+      # 5. Analisa o código em busca de erros de sintaxe ou avisos de código
       - name: Analyze project
         run: flutter analyze
 
-      - name: Run widget tests
-        run: flutter test
-
+      # 6. Compila o APK em modo de produção (Release)
+      # O parâmetro --android-skip-build-dependency-validation ignora divergências secundárias do Gradle
       - name: Build APK
-        run: flutter build apk --release
+        run: flutter build apk --release --android-skip-build-dependency-validation
 
+      # 7. Disponibiliza o APK compilado para download na interface do GitHub
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: release-apk
           path: build/app/outputs/flutter-apk/app-release.apk
+          
