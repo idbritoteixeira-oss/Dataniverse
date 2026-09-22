@@ -45,6 +45,15 @@
             android:name="flutterEmbedding"
             android:value="2" />
 
+        <!--
+          Ícone usado pelo flutter_foreground_task na barra de status.
+          O valor deve ser o resource id do drawable.
+          metaDataName em main.dart: 'com.dataniverse.notification_icon'
+        -->
+        <meta-data
+            android:name="com.dataniverse.notification_icon"
+            android:resource="@drawable/ic_dataniverse" />
+
         <!-- Foreground service do flutter_foreground_task -->
         <service
             android:name="com.pravera.flutter_foreground_task.service.ForegroundService"
