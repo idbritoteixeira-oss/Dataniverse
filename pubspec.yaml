@@ -14,6 +14,8 @@ dependencies:
   network_info_plus: ^6.1.4
   path: ^1.9.0
   path_provider: ^2.1.5
+  http: ^1.2.1
+  flutter_foreground_task: ^8.14.0
 
 dev_dependencies:
   flutter_test:

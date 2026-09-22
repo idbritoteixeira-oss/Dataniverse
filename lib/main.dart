@@ -1,16 +1,77 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_foreground_task/flutter_foreground_task.dart';
 import 'package:network_info_plus/network_info_plus.dart';
 
 import 'config/server_config.dart';
 import 'database/enx_db.dart';
 import 'network/dataniverse_server.dart';
+import 'ui/db_editor_page.dart';
 
+// ──────────────────────────────────────────────
+// #2 / #3  FOREGROUND TASK HANDLER
+// Roda em isolate separado; mantém servidor vivo
+// quando o app está minimizado e exibe ícone +
+// texto na barra de status do sistema.
+// ──────────────────────────────────────────────
+@pragma('vm:entry-point')
+void startCallback() {
+  FlutterForegroundTask.setTaskHandler(_DataniverseTaskHandler());
+}
+
+class _DataniverseTaskHandler extends TaskHandler {
+  DataniverseServer? _server;
+
+  @override
+  Future<void> onStart(DateTime timestamp, TaskStarter starter) async {
+    final config = await ServerConfig.load();
+    final db = EnXDB(basePath: config.basePath);
+    _server = DataniverseServer(config: config, database: db);
+    await _server!.start();
+    FlutterForegroundTask.updateService(
+      notificationTitle: 'Dataniverse · Online',
+      notificationText: 'Porta ${config.port} · aguardando conexões',
+    );
+  }
+
+  @override
+  Future<void> onRepeatEvent(DateTime timestamp) async {
+    // Atualiza a notificação com o número de conexões ativas
+    final count = _server?.connectionCount ?? 0;
+    FlutterForegroundTask.updateService(
+      notificationTitle: 'Dataniverse · Online',
+      notificationText:
+          'Porta ${_server?.config.port ?? '?'} · $count conexão(ões) ativa(s)',
+    );
+  }
+
+  @override
+  Future<void> onDestroy(DateTime timestamp) async {
+    await _server?.stop();
+    _server = null;
+  }
+
+  @override
+  void onReceiveData(Object data) {
+    // Pode receber comandos do UI via sendData() no futuro
+  }
+
+  @override
+  void onNotificationButtonPressed(String id) {}
+
+  @override
+  void onNotificationDismissed() {}
+}
+
+// ──────────────────────────────────────────────
 typedef ServerConfigLoader = Future<ServerConfig> Function();
 typedef WifiIpLoader = Future<String?> Function();
 
 void main() {
+  // Necessário para flutter_foreground_task
+  WidgetsFlutterBinding.ensureInitialized();
+  FlutterForegroundTask.initCommunicationPort();
   runApp(const DataniverseServerApp());
 }
 
@@ -67,9 +128,11 @@ class DataniverseServerApp extends StatelessWidget {
           ),
         ),
       ),
-      home: DataniverseServerPage(
-        configLoader: configLoader,
-        wifiIpLoader: wifiIpLoader,
+      home: WithForegroundTask(
+        child: DataniverseServerPage(
+          configLoader: configLoader,
+          wifiIpLoader: wifiIpLoader,
+        ),
       ),
     );
   }
@@ -98,7 +161,8 @@ class _DataniverseServerPageState extends State<DataniverseServerPage> {
 
   DataniverseServer? _server;
   ServerConfig? _config;
-  String _ipAddress = 'Não detectado';
+  String _localIp = 'Não detectado';
+  String _publicIp = '...';
   String? _loadError;
   bool _loading = true;
   bool _saving = false;
@@ -109,12 +173,47 @@ class _DataniverseServerPageState extends State<DataniverseServerPage> {
   @override
   void initState() {
     super.initState();
+    _initForegroundTask();
     unawaited(_initialize());
+  }
+
+  // ──────────────────────────────────────────────
+  // #2 / #3  Configura o foreground service
+  // ──────────────────────────────────────────────
+  void _initForegroundTask() {
+    FlutterForegroundTask.init(
+      androidNotificationOptions: AndroidNotificationOptions(
+        channelId: 'dataniverse_channel',
+        channelName: 'Dataniverse Server',
+        channelDescription:
+            'Mantém o servidor de banco de dados ativo em segundo plano.',
+        channelImportance: NotificationChannelImportance.LOW,
+        priority: NotificationPriority.LOW,
+        // Ícone na barra de status (requer drawable ic_dataniverse)
+        iconData: const NotificationIconData(
+          resType: ResourceType.drawable,
+          resPrefix: ResourcePrefix.ic,
+          name: 'dataniverse',
+        ),
+      ),
+      iosNotificationOptions: const IOSNotificationOptions(
+        showNotification: true,
+        playSound: false,
+      ),
+      foregroundTaskOptions: ForegroundTaskOptions(
+        eventAction: ForegroundTaskEventAction.repeat(5000),
+        autoRunOnBoot: true,
+        autoRunOnMyPackageReplaced: true,
+        allowWakeLock: true,
+        allowWifiLock: true,
+      ),
+    );
   }
 
   Future<void> _initialize() async {
     try {
-      final config = await (widget.configLoader ?? ServerConfig.load)();
+      final config =
+          await (widget.configLoader ?? ServerConfig.load)();
       _portController.text = config.port.toString();
       _passwordController.text = config.password;
       _basePathController.text = config.basePath;
@@ -140,30 +239,31 @@ class _DataniverseServerPageState extends State<DataniverseServerPage> {
       database: EnXDB(basePath: config.basePath),
       onLog: _addLog,
       onConnectionsChanged: (_) {
-        if (mounted) {
-          setState(() {});
-        }
+        if (mounted) setState(() {});
       },
     );
   }
 
   Future<void> _refreshIpAddress() async {
+    // IP local (Wi-Fi)
     try {
-      final ip = await (widget.wifiIpLoader ?? _networkInfo.getWifiIP)();
+      final ip =
+          await (widget.wifiIpLoader ?? _networkInfo.getWifiIP)();
       if (mounted && ip != null && ip.isNotEmpty) {
-        setState(() {
-          _ipAddress = ip;
-        });
+        setState(() => _localIp = ip);
       }
     } catch (error) {
       _addLog('Não foi possível detectar o IP Wi-Fi: $error');
     }
+
+    // #1 IP público — lido do servidor após ele detectar
+    if (_server?.publicIp != null) {
+      setState(() => _publicIp = _server!.publicIp!);
+    }
   }
 
   Future<bool> _persistForm({bool showFeedback = true}) async {
-    if (_isRunning || _config == null || _saving) {
-      return false;
-    }
+    if (_isRunning || _config == null || _saving) return false;
 
     final port = int.tryParse(_portController.text.trim());
     final password = _passwordController.text.trim();
@@ -182,9 +282,7 @@ class _DataniverseServerPageState extends State<DataniverseServerPage> {
       return false;
     }
 
-    setState(() {
-      _saving = true;
-    });
+    setState(() => _saving = true);
     try {
       final config = _config!.copyWith(
         port: port,
@@ -194,68 +292,70 @@ class _DataniverseServerPageState extends State<DataniverseServerPage> {
       await config.save();
       _installServer(config);
       _addLog('Configurações salvas em config.json.');
-      if (showFeedback) {
-        _showMessage('Configurações salvas.');
-      }
+      if (showFeedback) _showMessage('Configurações salvas.');
       return true;
     } catch (error) {
       _showMessage('Erro ao salvar configuração: $error');
       return false;
     } finally {
-      if (mounted) {
-        setState(() {
-          _saving = false;
-        });
-      }
+      if (mounted) setState(() => _saving = false);
     }
   }
 
+  // ──────────────────────────────────────────────
+  // #2 Inicia servidor + foreground service
+  // ──────────────────────────────────────────────
   Future<void> _startServer() async {
-    if (_isRunning) {
-      return;
-    }
+    if (_isRunning) return;
     final saved = await _persistForm(showFeedback: false);
-    if (!saved || _server == null) {
-      return;
-    }
+    if (!saved || _server == null) return;
 
     try {
       await _server!.start();
-      if (mounted) {
-        setState(() {});
-      }
-      _showMessage('Servidor Dataniverse iniciado na porta ${_config!.port}.');
+
+      // Inicia o Android Foreground Service
+      await FlutterForegroundTask.startService(
+        serviceId: 1000,
+        notificationTitle: 'Dataniverse · Iniciando',
+        notificationText: 'Porta ${_config!.port}',
+        callback: startCallback,
+      );
+
+      if (mounted) setState(() {});
+      _showMessage(
+          'Servidor Dataniverse iniciado na porta ${_config!.port}.');
+
+      // Aguarda um pouco e atualiza IP público
+      Future.delayed(const Duration(seconds: 3), () async {
+        if (mounted && _server?.publicIp != null) {
+          setState(() => _publicIp = _server!.publicIp!);
+        }
+      });
     } catch (error) {
       _addLog('Falha ao iniciar servidor: $error');
       _showMessage('Não foi possível iniciar o servidor: $error');
     }
   }
 
+  // ──────────────────────────────────────────────
+  // #2 Para servidor + foreground service
+  // ──────────────────────────────────────────────
   Future<void> _stopServer() async {
-    if (!_isRunning) {
-      return;
-    }
+    if (!_isRunning) return;
     await _server?.stop();
-    if (mounted) {
-      setState(() {});
-    }
+    await FlutterForegroundTask.stopService();
+    if (mounted) setState(() {});
     _showMessage('Servidor Dataniverse parado.');
   }
 
   void _addLog(String message) {
     _logs.add(message);
-    if (_logs.length > 200) {
-      _logs.removeAt(0);
-    }
-    if (mounted) {
-      setState(() {});
-    }
+    if (_logs.length > 200) _logs.removeAt(0);
+    if (mounted) setState(() {});
   }
 
   void _showMessage(String message) {
-    if (!mounted) {
-      return;
-    }
+    if (!mounted) return;
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(SnackBar(content: Text(message)));
@@ -293,8 +393,22 @@ class _DataniverseServerPageState extends State<DataniverseServerPage> {
           ],
         ),
         actions: [
+          // #5 Botão para o editor da DB
+          if (_config != null)
+            IconButton(
+              tooltip: 'Editor da base de dados',
+              icon: const Icon(Icons.table_view_rounded),
+              onPressed: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => DbEditorPage(
+                    database: EnXDB(basePath: _config!.basePath),
+                  ),
+                ),
+              ),
+            ),
           IconButton(
-            tooltip: 'Atualizar IP',
+            tooltip: 'Atualizar IPs',
             onPressed: _refreshIpAddress,
             icon: const Icon(Icons.wifi_rounded),
           ),
@@ -304,7 +418,8 @@ class _DataniverseServerPageState extends State<DataniverseServerPage> {
       body: SafeArea(
         child: LayoutBuilder(
           builder: (context, constraints) {
-            final horizontalPadding = constraints.maxWidth >= 900 ? 64.0 : 20.0;
+            final horizontalPadding =
+                constraints.maxWidth >= 900 ? 64.0 : 20.0;
             final wideLayout = constraints.maxWidth >= 900;
 
             return SingleChildScrollView(
@@ -328,7 +443,8 @@ class _DataniverseServerPageState extends State<DataniverseServerPage> {
                       const SizedBox(height: 24),
                       _StatusCard(
                         isRunning: _isRunning,
-                        ipAddress: _ipAddress,
+                        localIp: _localIp,
+                        publicIp: _publicIp,
                         port: _config?.port ?? 8080,
                         connectionCount: _connectionCount,
                       ),
@@ -378,7 +494,7 @@ class _DataniverseServerPageState extends State<DataniverseServerPage> {
               decoration: const InputDecoration(
                 labelText: 'Porta TCP',
                 prefixIcon: Icon(Icons.settings_ethernet_rounded),
-                helperText: 'Padrão: 8080',
+                helperText: 'Padrão: 8080  ·  Configure o port forwarding no roteador para acesso externo',
               ),
             ),
             const SizedBox(height: 14),
@@ -417,15 +533,15 @@ class _DataniverseServerPageState extends State<DataniverseServerPage> {
                 const SizedBox(width: 12),
                 Expanded(
                   child: FilledButton.icon(
-                    onPressed: _isRunning || _saving
-                        ? _stopServer
-                        : _startServer,
+                    onPressed:
+                        _isRunning || _saving ? _stopServer : _startServer,
                     icon: Icon(
                       _isRunning
                           ? Icons.stop_circle_outlined
                           : Icons.play_circle_outline_rounded,
                     ),
-                    label: Text(_isRunning ? 'Parar servidor' : 'Iniciar servidor'),
+                    label: Text(
+                        _isRunning ? 'Parar servidor' : 'Iniciar servidor'),
                   ),
                 ),
               ],
@@ -471,7 +587,8 @@ class _DataniverseServerPageState extends State<DataniverseServerPage> {
                   : ListView.separated(
                       reverse: true,
                       itemCount: _logs.length,
-                      separatorBuilder: (_, __) => const SizedBox(height: 8),
+                      separatorBuilder: (_, __) =>
+                          const SizedBox(height: 8),
                       itemBuilder: (context, index) {
                         final log = _logs[_logs.length - 1 - index];
                         return Text(
@@ -493,6 +610,11 @@ class _DataniverseServerPageState extends State<DataniverseServerPage> {
   }
 }
 
+// ──────────────────────────────────────────────
+// Widgets de UI (sem alteração estrutural, com
+// _StatusCard recebendo localIp e publicIp)
+// ──────────────────────────────────────────────
+
 class _PageHeader extends StatelessWidget {
   const _PageHeader({required this.isRunning});
 
@@ -509,16 +631,17 @@ class _PageHeader extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'Banco de dados na sua rede local.',
-                style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                      fontWeight: FontWeight.w800,
-                      letterSpacing: -0.7,
-                    ),
+                'Banco de dados na internet.',
+                style:
+                    Theme.of(context).textTheme.headlineMedium?.copyWith(
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: -0.7,
+                        ),
               ),
               const SizedBox(height: 8),
               Text(
                 'Controle o acesso TCP, armazene registros JSON e consulte '
-                'índices sem depender de um serviço externo.',
+                'índices de qualquer lugar via IP público.',
                 style: Theme.of(context).textTheme.bodyLarge?.copyWith(
                       color: colorScheme.onSurfaceVariant,
                       height: 1.45,
@@ -537,13 +660,15 @@ class _PageHeader extends StatelessWidget {
 class _StatusCard extends StatelessWidget {
   const _StatusCard({
     required this.isRunning,
-    required this.ipAddress,
+    required this.localIp,
+    required this.publicIp,
     required this.port,
     required this.connectionCount,
   });
 
   final bool isRunning;
-  final String ipAddress;
+  final String localIp;
+  final String publicIp;
   final int port;
   final int connectionCount;
 
@@ -556,11 +681,19 @@ class _StatusCard extends StatelessWidget {
           spacing: 28,
           runSpacing: 18,
           children: [
+            // #1 IP local
             _MetricTile(
               icon: Icons.router_outlined,
-              label: 'Endereço local',
-              value: isRunning ? '$ipAddress:$port' : ipAddress,
+              label: 'IP local (rede)',
+              value: isRunning ? '$localIp:$port' : localIp,
               accent: Theme.of(context).colorScheme.primary,
+            ),
+            // #1 IP público
+            _MetricTile(
+              icon: Icons.language_rounded,
+              label: 'IP público (internet)',
+              value: isRunning ? '$publicIp:$port' : publicIp,
+              accent: const Color(0xFF0B8F71),
             ),
             _MetricTile(
               icon: isRunning
@@ -616,16 +749,19 @@ class _MetricTile extends StatelessWidget {
                 Text(
                   label,
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        color: Theme.of(context)
+                            .colorScheme
+                            .onSurfaceVariant,
                       ),
                 ),
                 const SizedBox(height: 2),
                 Text(
                   value,
                   overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.w800,
-                      ),
+                  style:
+                      Theme.of(context).textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.w800,
+                          ),
                 ),
               ],
             ),
@@ -666,7 +802,8 @@ class _SectionHeading extends StatelessWidget {
               Text(
                 subtitle,
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      color:
+                          Theme.of(context).colorScheme.onSurfaceVariant,
                     ),
               ),
             ],
@@ -684,7 +821,9 @@ class _StatusPill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = isRunning ? const Color(0xFF0B8F71) : const Color(0xFF718096);
+    final color = isRunning
+        ? const Color(0xFF0B8F71)
+        : const Color(0xFF718096);
     return DecoratedBox(
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.1),
