@@ -7,12 +7,22 @@ import 'config/server_config.dart';
 import 'database/enx_db.dart';
 import 'network/dataniverse_server.dart';
 
+typedef ServerConfigLoader = Future<ServerConfig> Function();
+typedef WifiIpLoader = Future<String?> Function();
+
 void main() {
   runApp(const DataniverseServerApp());
 }
 
 class DataniverseServerApp extends StatelessWidget {
-  const DataniverseServerApp({super.key});
+  const DataniverseServerApp({
+    super.key,
+    this.configLoader,
+    this.wifiIpLoader,
+  });
+
+  final ServerConfigLoader? configLoader;
+  final WifiIpLoader? wifiIpLoader;
 
   @override
   Widget build(BuildContext context) {
@@ -57,13 +67,23 @@ class DataniverseServerApp extends StatelessWidget {
           ),
         ),
       ),
-      home: const DataniverseServerPage(),
+      home: DataniverseServerPage(
+        configLoader: configLoader,
+        wifiIpLoader: wifiIpLoader,
+      ),
     );
   }
 }
 
 class DataniverseServerPage extends StatefulWidget {
-  const DataniverseServerPage({super.key});
+  const DataniverseServerPage({
+    super.key,
+    this.configLoader,
+    this.wifiIpLoader,
+  });
+
+  final ServerConfigLoader? configLoader;
+  final WifiIpLoader? wifiIpLoader;
 
   @override
   State<DataniverseServerPage> createState() => _DataniverseServerPageState();
@@ -94,7 +114,7 @@ class _DataniverseServerPageState extends State<DataniverseServerPage> {
 
   Future<void> _initialize() async {
     try {
-      final config = await ServerConfig.load();
+      final config = await (widget.configLoader ?? ServerConfig.load)();
       _portController.text = config.port.toString();
       _passwordController.text = config.password;
       _basePathController.text = config.basePath;
@@ -129,7 +149,7 @@ class _DataniverseServerPageState extends State<DataniverseServerPage> {
 
   Future<void> _refreshIpAddress() async {
     try {
-      final ip = await _networkInfo.getWifiIP();
+      final ip = await (widget.wifiIpLoader ?? _networkInfo.getWifiIP)();
       if (mounted && ip != null && ip.isNotEmpty) {
         setState(() {
           _ipAddress = ip;
