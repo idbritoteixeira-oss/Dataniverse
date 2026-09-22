@@ -67,6 +67,7 @@ class DataniverseServer {
     );
 
     socket
+        .cast<List<int>>()
         .transform(utf8.decoder)
         .transform(const LineSplitter())
         .listen(
