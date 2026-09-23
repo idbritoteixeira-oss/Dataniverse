@@ -74,23 +74,20 @@ class DataniverseServer {
 
     try {
       if (config.enableTcp) {
-        _tcpServer = await ServerSocket.bind(
-          InternetAddress.anyIPv4,
-          config.port,
-        );
+        _tcpServer = await _bindTcpServer(config.port);
         _tcpSubscription = _tcpServer!.listen(_handleTcpClient);
-        _log('Servidor TCP iniciado na porta ${config.port}.');
+        _log(
+          'Servidor TCP iniciado em ${_tcpServer!.address.address}:'
+          '${config.port}.',
+        );
       }
 
       if (config.enableHttp) {
-        _httpServer = await HttpServer.bind(
-          InternetAddress.anyIPv4,
-          config.httpPort,
-        );
+        _httpServer = await _bindHttpServer(config.httpPort);
         _httpSubscription = _httpServer!.listen(_handleHttpRequest);
         _log(
           'Servidor HTTP${config.enableWebSocket ? '/WebSocket' : ''} '
-          'iniciado na porta ${config.httpPort}.',
+          'iniciado em ${_httpServer!.address.address}:${config.httpPort}.',
         );
       }
 
@@ -98,6 +95,32 @@ class DataniverseServer {
     } catch (_) {
       await _closeResources();
       rethrow;
+    }
+  }
+
+  Future<ServerSocket> _bindTcpServer(int port) async {
+    try {
+      return await ServerSocket.bind(
+        InternetAddress.anyIPv6,
+        port,
+        v6Only: false,
+      );
+    } on SocketException catch (error) {
+      _log('IPv6 indisponível para TCP ($error); usando IPv4.');
+      return ServerSocket.bind(InternetAddress.anyIPv4, port);
+    }
+  }
+
+  Future<HttpServer> _bindHttpServer(int port) async {
+    try {
+      return await HttpServer.bind(
+        InternetAddress.anyIPv6,
+        port,
+        v6Only: false,
+      );
+    } on SocketException catch (error) {
+      _log('IPv6 indisponível para HTTP/WebSocket ($error); usando IPv4.');
+      return HttpServer.bind(InternetAddress.anyIPv4, port);
     }
   }
 
@@ -141,7 +164,7 @@ class DataniverseServer {
   Future<void> _detectPublicIp() async {
     try {
       final response = await http
-          .get(Uri.parse('https://api.ipify.org'))
+          .get(Uri.parse('https://api64.ipify.org'))
           .timeout(const Duration(seconds: 8));
       if (response.statusCode == HttpStatus.ok) {
         publicIp = response.body.trim();
@@ -204,6 +227,13 @@ class DataniverseServer {
   }
 
   Future<void> _processHttpRequest(HttpRequest request) async {
+    final connection = request.connectionInfo;
+    final clientAddress = connection?.remoteAddress.address ?? 'desconhecido';
+    final clientPort = connection?.remotePort;
+    _log(
+      'Conexão HTTP recebida de $clientAddress:${clientPort ?? '?'} '
+      '${request.method} ${request.uri.path}.',
+    );
     _addHttpRequest();
     _applyCors(request.response);
 
@@ -320,7 +350,12 @@ class DataniverseServer {
     _webSocketClients.add(webSocket);
     _webSocketAuthenticated[webSocket] = false;
     _notifyConnections();
-    _log('Cliente WebSocket conectado.');
+    final connection = request.connectionInfo;
+    _log(
+      'Cliente WebSocket conectado de '
+      '${connection?.remoteAddress.address ?? 'desconhecido'}:'
+      '${connection?.remotePort ?? '?'}.',
+    );
 
     webSocket.listen(
       (message) => unawaited(_handleWebSocketMessage(webSocket, message)),
@@ -367,6 +402,16 @@ class DataniverseServer {
     final action = request['action']?.toString().toUpperCase();
     _log('Requisição recebida: ${action ?? 'sem action'}.');
 
+    if (action == 'PING') {
+      return _SessionResult(
+        response: {
+          'status': 'PONG',
+          'timestamp': DateTime.now().toUtc().toIso8601String(),
+        },
+        authenticated: authenticated,
+      );
+    }
+
     if (!authenticated) {
       if (action != 'AUTH') {
         return const _SessionResult(
@@ -412,6 +457,11 @@ class DataniverseServer {
   ) async {
     final action = request['action']?.toString().toUpperCase();
     switch (action) {
+      case 'PING':
+        return {
+          'status': 'PONG',
+          'timestamp': DateTime.now().toUtc().toIso8601String(),
+        };
       case 'INSERT':
         return _insert(request);
       case 'UPDATE':

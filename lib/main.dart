@@ -472,8 +472,8 @@ class _DataniverseServerPageState extends State<DataniverseServerPage> {
                         isRunning: _isRunning,
                         localIp: _localIp,
                         publicIp: _publicIp,
-                        port: _config?.port ?? 8080,
-                        httpPort: _config?.httpPort ?? 8081,
+                        port: _config?.port ?? 8081,
+                        httpPort: _config?.httpPort ?? 8080,
                         enableTcp: _config?.enableTcp ?? true,
                         enableHttp: _config?.enableHttp ?? true,
                         connectionCount: _connectionCount,
@@ -524,7 +524,7 @@ class _DataniverseServerPageState extends State<DataniverseServerPage> {
               decoration: const InputDecoration(
                 labelText: 'Porta TCP',
                 prefixIcon: Icon(Icons.settings_ethernet_rounded),
-                helperText: 'Padrão: 8080  ·  Configure o port forwarding no roteador para acesso externo',
+                helperText: 'Padrão: 8081  ·  Compatibilidade TCP',
               ),
             ),
             const SizedBox(height: 14),
@@ -535,7 +535,7 @@ class _DataniverseServerPageState extends State<DataniverseServerPage> {
               decoration: const InputDecoration(
                 labelText: 'Porta HTTP / WebSocket',
                 prefixIcon: Icon(Icons.http_rounded),
-                helperText: 'Padrão: 8081  ·  REST em /command e WebSocket em /ws',
+                helperText: 'Padrão: 8080  ·  REST em /command e WebSocket em /ws',
               ),
             ),
             const SizedBox(height: 8),

@@ -5,9 +5,9 @@ import 'package:path/path.dart' as path;
 import 'package:path_provider/path_provider.dart';
 
 class ServerConfig {
-  static const int defaultPort = 8080;
-  static const int defaultHttpPort = 8081;
-  static const String defaultPassword = 'enx123';
+  static const int defaultPort = 8081;
+  static const int defaultHttpPort = 8080;
+  static const String defaultPassword = 'abc123';
 
   const ServerConfig({
     required this.port,
@@ -65,11 +65,18 @@ class ServerConfig {
         ? rawPort
         : int.tryParse(rawPort?.toString() ?? '') ?? defaultPort;
     final safePort = parsedPort.clamp(1, 65535).toInt();
+    final hasHttpPort = json.containsKey('httpPort');
     final rawHttpPort = json['httpPort'];
     final parsedHttpPort = rawHttpPort is int
         ? rawHttpPort
         : int.tryParse(rawHttpPort?.toString() ?? '') ?? defaultHttpPort;
-    final safeHttpPort = parsedHttpPort.clamp(1, 65535).toInt();
+    final safeHttpPort = (hasHttpPort
+            ? parsedHttpPort
+            : safePort == defaultHttpPort
+                ? defaultPort
+                : defaultHttpPort)
+        .clamp(1, 65535)
+        .toInt();
     final password = json['password']?.toString().trim();
     final basePath = json['basePath']?.toString().trim();
 
