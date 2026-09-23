@@ -154,6 +154,7 @@ class DataniverseServerPage extends StatefulWidget {
 
 class _DataniverseServerPageState extends State<DataniverseServerPage> {
   final _portController = TextEditingController();
+  final _httpPortController = TextEditingController();
   final _passwordController = TextEditingController();
   final _basePathController = TextEditingController();
   final _networkInfo = NetworkInfo();
@@ -166,6 +167,9 @@ class _DataniverseServerPageState extends State<DataniverseServerPage> {
   String? _loadError;
   bool _loading = true;
   bool _saving = false;
+  bool _enableTcp = true;
+  bool _enableHttp = true;
+  bool _enableWebSocket = true;
 
   bool get _isRunning => _server?.isRunning ?? false;
   int get _connectionCount => _server?.connectionCount ?? 0;
@@ -209,8 +213,12 @@ class _DataniverseServerPageState extends State<DataniverseServerPage> {
       final config =
           await (widget.configLoader ?? ServerConfig.load)();
       _portController.text = config.port.toString();
+      _httpPortController.text = config.httpPort.toString();
       _passwordController.text = config.password;
       _basePathController.text = config.basePath;
+      _enableTcp = config.enableTcp;
+      _enableHttp = config.enableHttp;
+      _enableWebSocket = config.enableWebSocket;
       _installServer(config);
       await _refreshIpAddress();
       _addLog('Configurações carregadas de config.json.');
@@ -260,11 +268,24 @@ class _DataniverseServerPageState extends State<DataniverseServerPage> {
     if (_isRunning || _config == null || _saving) return false;
 
     final port = int.tryParse(_portController.text.trim());
+    final httpPort = int.tryParse(_httpPortController.text.trim());
     final password = _passwordController.text.trim();
     final basePath = _basePathController.text.trim();
 
     if (port == null || port < 1 || port > 65535) {
       _showMessage('Informe uma porta entre 1 e 65535.');
+      return false;
+    }
+    if (httpPort == null || httpPort < 1 || httpPort > 65535) {
+      _showMessage('Informe uma porta HTTP entre 1 e 65535.');
+      return false;
+    }
+    if (!_enableTcp && !_enableHttp) {
+      _showMessage('Ative TCP ou HTTP antes de iniciar o servidor.');
+      return false;
+    }
+    if (_enableTcp && _enableHttp && port == httpPort) {
+      _showMessage('As portas TCP e HTTP precisam ser diferentes.');
       return false;
     }
     if (password.isEmpty) {
@@ -280,8 +301,12 @@ class _DataniverseServerPageState extends State<DataniverseServerPage> {
     try {
       final config = _config!.copyWith(
         port: port,
+        httpPort: httpPort,
         password: password,
         basePath: basePath,
+        enableTcp: _enableTcp,
+        enableHttp: _enableHttp,
+        enableWebSocket: _enableHttp && _enableWebSocket,
       );
       await config.save();
       _installServer(config);
@@ -321,7 +346,10 @@ class _DataniverseServerPageState extends State<DataniverseServerPage> {
 
       if (mounted) setState(() {});
       _showMessage(
-          'Servidor Dataniverse iniciado na porta ${_config!.port}.');
+        'Servidor Dataniverse iniciado. '
+        'TCP: ${_config!.enableTcp ? _config!.port : 'off'} · '
+        'HTTP: ${_config!.enableHttp ? _config!.httpPort : 'off'}.',
+      );
 
       // Aguarda um pouco e atualiza IP público
       Future.delayed(const Duration(seconds: 3), () async {
@@ -364,6 +392,7 @@ class _DataniverseServerPageState extends State<DataniverseServerPage> {
     unawaited(_server?.stop());
     _portController.dispose();
     _passwordController.dispose();
+    _httpPortController.dispose();
     _basePathController.dispose();
     super.dispose();
   }
@@ -444,6 +473,9 @@ class _DataniverseServerPageState extends State<DataniverseServerPage> {
                         localIp: _localIp,
                         publicIp: _publicIp,
                         port: _config?.port ?? 8080,
+                        httpPort: _config?.httpPort ?? 8081,
+                        enableTcp: _config?.enableTcp ?? true,
+                        enableHttp: _config?.enableHttp ?? true,
                         connectionCount: _connectionCount,
                       ),
                       const SizedBox(height: 20),
@@ -496,6 +528,52 @@ class _DataniverseServerPageState extends State<DataniverseServerPage> {
               ),
             ),
             const SizedBox(height: 14),
+            TextField(
+              controller: _httpPortController,
+              enabled: !_isRunning && !_saving,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                labelText: 'Porta HTTP / WebSocket',
+                prefixIcon: Icon(Icons.http_rounded),
+                helperText: 'Padrão: 8081  ·  REST em /command e WebSocket em /ws',
+              ),
+            ),
+            const SizedBox(height: 8),
+            SwitchListTile.adaptive(
+              contentPadding: EdgeInsets.zero,
+              value: _enableTcp,
+              onChanged: _isRunning || _saving
+                  ? null
+                  : (value) => setState(() => _enableTcp = value),
+              title: const Text('Servidor TCP'),
+              subtitle: const Text('Protocolo JSON por linhas'),
+            ),
+            SwitchListTile.adaptive(
+              contentPadding: EdgeInsets.zero,
+              value: _enableHttp,
+              onChanged: _isRunning || _saving
+                  ? null
+                  : (value) {
+                      setState(() {
+                        _enableHttp = value;
+                        if (!value) {
+                          _enableWebSocket = false;
+                        }
+                      });
+                    },
+              title: const Text('Servidor HTTP REST'),
+              subtitle: const Text('Endpoint POST /command'),
+            ),
+            SwitchListTile.adaptive(
+              contentPadding: EdgeInsets.zero,
+              value: _enableWebSocket,
+              onChanged: !_enableHttp || _isRunning || _saving
+                  ? null
+                  : (value) => setState(() => _enableWebSocket = value),
+              title: const Text('WebSocket'),
+              subtitle: const Text('Conexão persistente em /ws'),
+            ),
+            const SizedBox(height: 8),
             TextField(
               controller: _passwordController,
               enabled: !_isRunning && !_saving,
@@ -661,6 +739,9 @@ class _StatusCard extends StatelessWidget {
     required this.localIp,
     required this.publicIp,
     required this.port,
+    required this.httpPort,
+    required this.enableTcp,
+    required this.enableHttp,
     required this.connectionCount,
   });
 
@@ -668,7 +749,18 @@ class _StatusCard extends StatelessWidget {
   final String localIp;
   final String publicIp;
   final int port;
+  final int httpPort;
+  final bool enableTcp;
+  final bool enableHttp;
   final int connectionCount;
+
+  String _endpoint(String host) {
+    final endpoints = <String>[
+      if (enableTcp) 'TCP:$port',
+      if (enableHttp) 'HTTP:$httpPort',
+    ];
+    return endpoints.isEmpty ? host : '$host ${endpoints.join(' · ')}';
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -683,14 +775,14 @@ class _StatusCard extends StatelessWidget {
             _MetricTile(
               icon: Icons.router_outlined,
               label: 'IP local (rede)',
-              value: isRunning ? '$localIp:$port' : localIp,
+              value: isRunning ? _endpoint(localIp) : localIp,
               accent: Theme.of(context).colorScheme.primary,
             ),
             // #1 IP público
             _MetricTile(
               icon: Icons.language_rounded,
               label: 'IP público (internet)',
-              value: isRunning ? '$publicIp:$port' : publicIp,
+              value: isRunning ? _endpoint(publicIp) : publicIp,
               accent: const Color(0xFF0B8F71),
             ),
             _MetricTile(

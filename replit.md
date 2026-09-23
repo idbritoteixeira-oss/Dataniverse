@@ -16,7 +16,7 @@ Servidor de banco de dados local em Flutter/Dart, com persistência JSON,
 - `lib/main.dart` — interface e controle do ciclo de vida do servidor
 - `lib/config/server_config.dart` — configuração persistida em `config.json`
 - `lib/database/enx_db.dart` — armazenamento JSON e índices `.db`
-- `lib/network/dataniverse_server.dart` — servidor TCP e protocolo JSON
+- `lib/network/dataniverse_server.dart` — servidores TCP, HTTP REST e WebSocket
 - `android/` — projeto Android nativo e Gradle Wrapper
 - `test/` — testes automatizados
 - `.github/workflows/android_build.yml` — análise, testes, build e upload do APK
@@ -27,14 +27,16 @@ Servidor de banco de dados local em Flutter/Dart, com persistência JSON,
 - O aplicativo vive na raiz do repositório para que o GitHub Actions execute os
   comandos Flutter diretamente.
 - O primeiro build usa Flutter SDK, `crypto`, `path_provider`,
-  `network_info_plus` e `path`.
+  `network_info_plus`, `path`, `http` e `flutter_foreground_task`.
 - O Android usa Java 17 e o Flutter Gradle Plugin Loader do template stable.
 
 ## Produto
 
 O Dataniverse Server permite iniciar um banco JSON local, receber comandos
-`AUTH`, `INSERT`, `FIND_BY_ID` e `FIND_BY_INDEX`, e acompanhar os eventos pela
-interface do aplicativo.
+`AUTH`, `INSERT`, `UPDATE`, `DELETE`, `FIND_BY_ID`, `FIND_BY_INDEX`,
+`LIST_TABLES` e `LIST_RECORDS` via TCP, HTTP REST (`POST /command`) ou
+WebSocket (`/ws`), e acompanhar os eventos pela interface do aplicativo.
+TCP e HTTP/WebSocket usam portas independentes configuráveis.
 ## User preferences
 
 _Populate as you build — explicit user instructions worth remembering across sessions._

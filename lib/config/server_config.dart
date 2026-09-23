@@ -6,35 +6,56 @@ import 'package:path_provider/path_provider.dart';
 
 class ServerConfig {
   static const int defaultPort = 8080;
+  static const int defaultHttpPort = 8081;
   static const String defaultPassword = 'enx123';
 
   const ServerConfig({
     required this.port,
     required this.password,
     required this.basePath,
+    this.httpPort = defaultHttpPort,
+    this.enableTcp = true,
+    this.enableHttp = true,
+    this.enableWebSocket = true,
   });
 
   final int port;
   final String password;
   final String basePath;
+  final int httpPort;
+  final bool enableTcp;
+  final bool enableHttp;
+  final bool enableWebSocket;
 
   ServerConfig copyWith({
     int? port,
     String? password,
     String? basePath,
+    int? httpPort,
+    bool? enableTcp,
+    bool? enableHttp,
+    bool? enableWebSocket,
   }) {
     return ServerConfig(
       port: port ?? this.port,
       password: password ?? this.password,
       basePath: basePath ?? this.basePath,
+      httpPort: httpPort ?? this.httpPort,
+      enableTcp: enableTcp ?? this.enableTcp,
+      enableHttp: enableHttp ?? this.enableHttp,
+      enableWebSocket: enableWebSocket ?? this.enableWebSocket,
     );
   }
 
   Map<String, dynamic> toJson() {
     return {
       'port': port,
+      'httpPort': httpPort,
       'password': password,
       'basePath': basePath,
+      'enableTcp': enableTcp,
+      'enableHttp': enableHttp,
+      'enableWebSocket': enableWebSocket,
     };
   }
 
@@ -44,18 +65,48 @@ class ServerConfig {
         ? rawPort
         : int.tryParse(rawPort?.toString() ?? '') ?? defaultPort;
     final safePort = parsedPort.clamp(1, 65535).toInt();
+    final rawHttpPort = json['httpPort'];
+    final parsedHttpPort = rawHttpPort is int
+        ? rawHttpPort
+        : int.tryParse(rawHttpPort?.toString() ?? '') ?? defaultHttpPort;
+    final safeHttpPort = parsedHttpPort.clamp(1, 65535).toInt();
     final password = json['password']?.toString().trim();
     final basePath = json['basePath']?.toString().trim();
 
     return ServerConfig(
       port: safePort,
+      httpPort: safeHttpPort,
       password: password == null || password.isEmpty
           ? defaultPassword
           : password,
       basePath: basePath == null || basePath.isEmpty
           ? ''
           : path.normalize(basePath),
+      enableTcp: _parseBool(json['enableTcp'], true),
+      enableHttp: _parseBool(json['enableHttp'], true),
+      enableWebSocket: _parseBool(json['enableWebSocket'], true),
     );
+  }
+
+  static bool _parseBool(dynamic value, bool fallback) {
+    if (value is bool) {
+      return value;
+    }
+    switch (value?.toString().trim().toLowerCase()) {
+      case 'true':
+      case '1':
+      case 'yes':
+      case 'sim':
+        return true;
+      case 'false':
+      case '0':
+      case 'no':
+      case 'nao':
+      case 'não':
+        return false;
+      default:
+        return fallback;
+    }
   }
 
   static Future<Directory> _documentsDirectory() async {
