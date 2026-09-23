@@ -60,12 +60,12 @@ class DataniverseServer {
       return;
     }
     if (!config.enableTcp && !config.enableHttp) {
-      throw const StateError('Ative pelo menos um protocolo do servidor.');
+      throw StateError('Ative pelo menos um protocolo do servidor.');
     }
     if (config.enableTcp &&
         config.enableHttp &&
         config.port == config.httpPort) {
-      throw const StateError(
+      throw StateError(
         'As portas TCP e HTTP precisam ser diferentes.',
       );
     }
